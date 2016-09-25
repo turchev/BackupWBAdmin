@@ -1,0 +1,262 @@
+  Скрипт BackupWBAdmin.ps1 предназначен для создания резервных копий данных, их архивирования  
+на сетевом хранилище и отправки уведомления о результате работы по почте, он основан на 
+утилите wbadmin.
+  Внимание - реализация wbadmin в различных версиях операционных систем отличается.
+Например wbadmin в Windows 7 или 2008, в отличии от 2008R2 не имеет параметров Exclude и systemState,
+а параметр Include допускает только диски или разделы, например C:, D:. Обратите на это внимание при 
+конфигурирования задания. Скрипт тестировался в операционных системах Windows 2008 и 2008R2. 
+Возможно применение на Windows Vista, 7, 8, 8.1, Server 2012, но не тестировалось. Предполагаю, что 
+конфигурирование Windows Vista, 7 аналогично Windows 2008, а конфигурирование Windows 8, 8.1, 
+Server 2012 аналогично Windows 2008R2, но перед применением желательно сравнить синтаксис утилит 
+командной строки wbadmin и net use.
+  Для работы скрипта необходим выделенный диск. Это сделано не случайно - это рекомендации Microsoft. 
+Дело в том, Windows Backup для своей работы использует службу Volume Shadow Copy Servise (VSS или 
+Теневое копирование тома). Резервируемые данные хранятся на выделенном диске в папке WindowsImageBackup 
+виде образов данных VHD. Так же на этом диске в System Volume Information хранятся снапшоты файловой 
+системы выделенного диска. Каждое последующее резервирование перезаписывает образы, но остаются 
+снапшоты (теневые копии). Благодаря этому можно восстановить данные с любой точки сохранения.
+Если же использовать сетевую папку, то образы будут перезаписываться, а снапшоты в сетевом разделе SMB 
+ресурса создаваться не могут, они создаются только в локальной файловой системе. 
+
+  Алгоритм работы (варианты в зависимости от конфигурации могут менятся) скрипта следующий:
+ - Резервирование на выделенный диск с помощью wbadmin
+ - Подключение сетевой папки для архивирования
+ - Ротация папок с архивами
+ - Архивация на сетевую папку с помощью архиватора 7z
+ - Отключение сетевой папки
+ - Отправка почтового сообщения с результатом выполнения
+
+Выполнение скрипта из консоли PowerShel: 
+	.\BackupWBAdmin.ps1 -ConfigFile C:\work\scripts\BackupWBAdmin\ConfigBackupWBAdmin.xml
+Планирование задания, с помощью планировщика заданий Windows:
+	Создайте простую задачу, назначте период и время выполнения, выберете действие "запуск программы".
+	В поле "Программа или сценарий" укажите 
+		powershell.exe
+	В поле "Добавить аргументы"
+		-Command C:\work\scripts\BackupWBAdmin\BackupWBAdmin.ps1 -ConfigFile "C:\work\scripts\BackupWBAdmin\ConfigBackupWBAdmin.xml"
+	указав свои пути расположения исполняемого и конфигурационного файлов 
+
+ 
+  Скрипт имеет только один пользовательский параметр -ConfigFile, который указывает 
+на расположение конфигурационного файла. Все конфигурациооные данные прописаны в xml файле. 
+Не изменяйте значения переменных внутри скрипта, для настройки используйте только файл конфигурации.
+
+
+Параметры конфигурационного файла:
+
+BACKUPS		Секция параметров для резервного копирования утилиты wbadmin
+	BackupTarget 	Расположение локального хранилища резервных копий. 
+		Необходимо указать букву диска, например (f:). 
+		P/S. Путь на основе GUID в формате \\?\Volume{GUID} или UNC-путь к удаленной общей папке
+		(\\<имя_сервера>\<имя_общего_ресурса>\) не использовать!!!	
+		Пример:
+			<BackupTarget>D:</BackupTarget>
+	Include  	Cписок элементов, которые включаются в архив.   
+		Для Windows Server 2008R2
+			Каждый элемент описывается в отдельном парамере Include. Путь к тому указывается 
+			с использованием буквы диска тома. Можно использовать подстановочный знак (*), 
+			но только в конце пути.	Значение параметра может отсутствовать если используются 
+			параметры systemState или allCritical, в этом случае параметр можно закомментировать 
+			или оставить значение пустым.
+			Пример:
+				<Include>F:</Include>				
+				<Include>C:\Program*</Include>
+					или закомментировать
+				<!--<Include>C:\work\scripts</Include>-->
+					или обнулить
+				<Include></Include>
+		Для Windows Server 2008
+			Допускается только диск или том. Вложенные папки и подстановочный знак (*) не допускаются
+			Пример:
+				<Include>D:</Include>
+				<Include>F:</Include>		
+	Exclude      Список элементов, исключаемых из архива.
+		Для Windows Server 2008R2
+			Путь к тому указывается с использованием буквы диска тома. Можно использовать 
+			подстановочный знак (*), но только в конце пути. Значение параметра может отсутствовать, 
+			в этом случае параметр можно закомментировать или оставить значение пустым.
+			Пример:			
+				<Exclude>C:\work\scripts</Exclude>
+				<Exclude>C:\work\Test*</Exclude>				
+		Для Windows Server 2008
+			Параметр Exclude отсутствует, его нужно закомментировать или обнулить
+			Пример:
+				<!--<Exclude>C:\work\scripts</Exclude>-->
+					или
+				<Exclude></Exclude>
+	TypeBackup	[systemState | allCritical]	Определяет тип бэкапа, параметр можно закомментировать или оставить значение пустым.
+		Для Windows Server 2008R2
+			systemState	 	Архивация состояния системы, а также любых 
+				других элементов, заданных с помощью параметра Include.	
+			allCritical  	Автоматическое включение в архив всех 
+				критических томов, т.е.	томов, которые содержат файлы и 
+				компоненты операционной системы, а также любых других элементов, 
+				заданных с помощью параметра Include. 				
+		Для Windows Server 2008
+			Доступен только параметр allCritical.
+			Пример:
+				<TypeBackup>allCritical</TypeBackup>
+ARCHIVE		Параметры для архивации      	
+	ArchivingBackup	{true|false}	логический параметр. True - производить архивацию, false - не производить.
+		P/S. Валидность этой секции конфигурационного xml файла будет проверятся даже при параметре false,
+		а корректность значений параметров этой секции проверяется только при параметре true
+		Пример:
+			<ArchivingBackup>true</ArchivingBackup>
+	ArchivesDay 	номер дня(дней) недели, в который(ые) нужно проводить архивацию. В остальные дни
+		архивация проводиться не будет - только бэкап на локальный диск. Если несколько дней, то
+		перечислять через запятую. Значение должно находиться в диапазоне от 0 до 6 (0-воскресенье, 1-понедельник) 
+		Пример:
+			<ArchivesDay>1,5,0</ArchivesDay>
+				или
+			<ArchivesDay>6</ArchivesDay>
+	CountRotation		Счетчик ротации, номер папки, по достижению которого будет произведена ротация.
+		То есть папки с архивами имеют названия 1,2,3, .. ,n, где 1 - папка с последними архивами, а 
+		n - CountRotation
+		Пример:
+			<CountRotation>3</CountRotation>
+	RotationDay 	номер дня(дней) недели, в который(ые) нужно проводить ротацию. В остальные дни
+		ротация проводиться не будет - только бэкап и архивирование. Если несколько дней, то
+		перечислять через запятую. Значение должно находиться в диапазоне от 1 до 7 (1-понедельник)
+		Пример:
+			<RotationDay>2,5</RotationDay>
+					или
+			<ArchivesDay>6</ArchivesDay>
+	ArchivesFolder		Сетевая папка для архивных копий. 
+		Пример:
+			<ArchivesFolder>\\192.168.100.90\NetBackup\MyServer.LocalDomainName.lan</ArchivesFolder>
+	ArchiveSize 	Размер частей архива в Гб, в случаее разбиения его на части. Если параметр не указать или обнулить
+		то архив будет одним цельным файлом
+		Пример:
+			<ArchiveSize>4</ArchiveSize>
+	User    Имя пользователя, от имени которого будет подключена сетевая папка. Если параметр не указан или обнулен,
+		то сетевая папка будет подключена от текущего пользователя.
+		P/S. Если к сетевому ресурсу, на машине с которой производится архивирование, уже есть сохраненное или 
+		закэшированное соединение, то параметр нужно обнулить или закомментировать, воизбежании ошибки одновременного 
+		подключения. Так же, если есть необходимость не показывать пароль, то нужно сохранить соединение и использовать
+		пустой параметр или планировать выполнение задания от имени нужного пользователя.
+		Пример:
+			<User>backup</User>
+				или
+			<User></User>					
+	Password     Пароль для имени пользователя, указанного в параметре User.
+		Пример:
+			<Password>Password_name</Password>
+				или
+			<Password></Password>
+SMTP	Параметры SMTP	
+	SmtpMessage {true|false}	логический параметр. True - отправлять сообщения, false - не отправлять.
+		P/S. Валидность этой секции конфигурационного xml файла будет проверятся даже при параметре false,
+		а корректность значений параметров этой секции проверяется только при параметре true
+		Пример:
+			<SmtpMessage>true</SmtpMessage>			
+	SmtpServerName	IP адрес или имя сервера SMTP.
+		Пример:
+			<SmtpServerName>192.168.100.1</SmtpServerName>
+	SmtpServerPort	Порт сервиса SMTP.
+		Пример:
+			<SmtpServerPort>25</SmtpServerPort>
+	SmtpServerUsername		Имя пользователя сервера SMTP.	
+		Пример:
+			<SmtpServerUsername>event-list</SmtpServerUsername>		
+	SmtpServerPassword		Пароль пользователя сервера SMTP. Значение параметра может отсутствовать.
+		Пример:
+			<SmtpServerPassword></SmtpServerPassword>
+	Ssl	{true|false} логический параметр. True - использовать Ssl, false - не использовать.
+		Пример:
+			<Ssl>false</Ssl>
+	Recipient	Поле Адрес получателя. Может принимать несколько значений. Каждое значение в отдельном параметре.
+		Пример:
+			<Recipient>UserName@LocalDomainName.lan</Recipient>
+			<Recipient>UserName@PublicDomainName.ru</Recipient>
+	Sender		Поле Адрес отправителя. Можно вписывать любой. Но лучьше, чтобы адрес отображал имя хоста, на котрорм исполнен скрипт
+		Пример:
+			<Sender>MyServer.LocalDomainName.lan@LocalDomainName.lan</Sender>
+		
+
+Пример конфигурационного файла с рабочего сервера:
+
+<?xml version="1.0" encoding="utf-8"?>
+<CONFIG>
+<BACKUPS>	
+	<BackupTarget>D:</BackupTarget>
+	<Include>C:</Include>
+	<Exclude>C:\Program File</Exclude>
+	<Exclude>C:\TestFile\Test Folders\No*</Exclude>
+	<TypeBackup>systemState</TypeBackup>
+</BACKUPS>
+<ARCHIVE>
+	<ArchivingBackup>true</ArchivingBackup>
+	<ArchivesDay>5,7</ArchivesDay>
+	<CountRotation>3</CountRotation>
+	<RotationDay>5,7</RotationDay>
+	<ArchivesFolder>\\192.168.100.90\NetBackup\MyServer.LocalDomainName.lan</ArchivesFolder>
+	<ArchiveSize>4</ArchiveSize>
+	<User></User>
+	<Password></Password>	
+</ARCHIVE>
+<SMTP>
+	<SmtpMessage>true</SmtpMessage>
+	<SmtpServerName>192.168.100.1</SmtpServerName>
+	<SmtpServerPort>25</SmtpServerPort>
+	<SmtpServerUsername>event-list</SmtpServerUsername>
+	<SmtpServerPassword></SmtpServerPassword>
+	<Ssl>false</Ssl>
+	<Recipient>UserName@LocalDomainName.lan</Recipient>
+	<Recipient>UserName@PublicDomainName.ru</Recipient>
+	<Sender>MyServer.LocalDomainName.lan@LocalDomainName.lan</Sender>	
+</SMTP>
+</CONFIG>
+
+		
+XML Schema для валидации конфигурациооного файла
+
+ <xs:schema attributeFormDefault="unqualified" elementFormDefault="qualified" xmlns:xs="http://www.w3.org/2001/XMLSchema">
+   <xs:element name="CONFIG">
+     <xs:complexType>
+       <xs:sequence>
+	     
+		 <xs:element name="BACKUPS">
+           <xs:complexType>
+             <xs:sequence>
+               <xs:element type="xs:string" name="BackupTarget" minOccurs="1" maxOccurs="1"/>
+               <xs:element type="xs:string" name="Include" minOccurs="0" maxOccurs="unbounded"/>
+               <xs:element type="xs:string" name="Exclude" minOccurs="0" maxOccurs="unbounded"/>
+               <xs:element type="xs:string" name="TypeBackup" minOccurs="0" maxOccurs="1"/>                              
+             </xs:sequence>
+           </xs:complexType>
+         </xs:element>
+		 
+		 <xs:element name="ARCHIVE">
+           <xs:complexType>
+             <xs:sequence>
+			   <xs:element type="xs:string" name="ArchivingBackup" minOccurs="1" maxOccurs="1"/> 
+			   <xs:element type="xs:string" name="ArchivesDay" minOccurs="0" maxOccurs="1"/>
+               <xs:element type="xs:string" name="CountRotation" minOccurs="0" maxOccurs="1"/>
+			   <xs:element type="xs:string" name="RotationDay" minOccurs="0" maxOccurs="1"/>
+               <xs:element type="xs:string" name="ArchivesFolder" minOccurs="0" maxOccurs="1"/>
+			   <xs:element type="xs:string" name="ArchiveSize" minOccurs="0" maxOccurs="1"/>
+               <xs:element type="xs:string" name="User" minOccurs="0" maxOccurs="1"/>
+			   <xs:element type="xs:string" name="Password" minOccurs="0" maxOccurs="1"/>
+             </xs:sequence>
+           </xs:complexType>
+         </xs:element>
+		 
+		 <xs:element name="SMTP">
+           <xs:complexType>
+             <xs:sequence>
+			   <xs:element type="xs:string" name="SmtpMessage" minOccurs="1" maxOccurs="1"/>
+               <xs:element type="xs:string" name="SmtpServerName" minOccurs="0" maxOccurs="1"/>
+               <xs:element type="xs:integer" name="SmtpServerPort" minOccurs="0" maxOccurs="1"/>
+               <xs:element type="xs:string" name="SmtpServerUsername" minOccurs="0" maxOccurs="1"/>
+               <xs:element type="xs:string" name="SmtpServerPassword" minOccurs="0" maxOccurs="1"/>
+               <xs:element type="xs:boolean" name="Ssl" minOccurs="0" maxOccurs="1"/>  
+               <xs:element type="xs:string" name="Recipient" minOccurs="1" maxOccurs="unbounded"/>
+               <xs:element type="xs:string" name="Sender" minOccurs="0" maxOccurs="1"/>			   
+             </xs:sequence>
+           </xs:complexType>
+         </xs:element>
+		        
+	   </xs:sequence>
+     </xs:complexType>
+   </xs:element>
+ </xs:schema>	

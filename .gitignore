@@ -1,0 +1,8 @@
+#=== log directory ===
+log/
+
+#=== temporary directory ===
+tmp/
+
+
+

@@ -1,0 +1,31 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<CONFIG>
+<BACKUPS>	
+	<BackupTarget>D:</BackupTarget>
+	<Include>C:</Include>
+	<Exclude>C:\Program File</Exclude>
+	<TypeBackup>systemState</TypeBackup>
+</BACKUPS>
+<ARCHIVE>
+	<ArchivingBackup>true</ArchivingBackup>
+	<ArchivesDay>3</ArchivesDay>
+	<CountRotation>3</CountRotation>
+	<RotationDay>3</RotationDay>
+	<ArchivesFolder>\\192.168.100.90\BackupWinServ\MyServer</ArchivesFolder>
+	<ArchiveSize>4</ArchiveSize>
+	<User></User>
+	<Password></Password>	
+</ARCHIVE>
+<SMTP>
+	<SmtpMessage>true</SmtpMessage>
+	<SmtpServerName>192.168.100.1</SmtpServerName>
+	<SmtpServerPort>25</SmtpServerPort>
+	<SmtpServerUsername>event-list</SmtpServerUsername>
+	<SmtpServerPassword></SmtpServerPassword>
+	<Ssl>false</Ssl>
+	<!--<Recipient>turlachev-p-m@domain.lan</Recipient>-->
+	<Recipient>event-list@domain.lan</Recipient>
+	<Recipient>turlachev-p-m@domain.ru</Recipient>
+	<Sender>MyServer@domain.lan</Sender>	
+</SMTP>
+</CONFIG>
